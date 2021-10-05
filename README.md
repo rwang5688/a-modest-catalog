@@ -1,2 +1,2 @@
-# a-modest-catalog
-AWS Service Catalog demonstration
+# aws-demo
+AWS Demo
