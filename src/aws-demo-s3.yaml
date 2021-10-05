@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS Demo S3 Bucket
+
+Parameters:
+  ProjectName:
+    ConstraintDescription: Project name that will be used as the prefix for all deployed resources
+    Default: aws-demo
+    Description: Project name that will be used as the prefix for all deployed resources
+    Type: String
+
+  BucketNameSuffix:
+    ConstraintDescription: Bucket name suffix (e.g., global unique id); prefix is ${ProjectName}-data-
+    Description: Bucket name suffix (e.g., global unique id); prefix is ${ProjectName}-data-
+    Type: String
+
+  ProjectKeyArn:
+    ConstraintDescription: Project KMS Key ARN
+    Description: Project KMS Key ARN
+    Type: String
+
+Resources:
+  #########################
+  #
+  # Data Bucket
+  #
+  #########################
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+            ServerSideEncryptionByDefault:
+              KMSMasterKeyID: !Ref ProjectKeyArn
+              SSEAlgorithm: 'aws:kms'
+      BucketName: !Sub ${ProjectName}-data-${BucketNameSuffix}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
+      VersioningConfiguration:
+        Status: Enabled
+
+  DataBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref DataBucket
+      PolicyDocument:
+        Id: S3 Put Object Policy
+        Version: 2012-10-17
+        Statement:
+          - Sid: Require SSE-KMS Encryption
+            Action:
+              - s3:PutObject
+            Condition:
+              StringNotEquals:
+                's3:x-amz-server-side-encryption': 'aws:kms'
+            Effect: Deny
+            Principal: '*'
+            Resource:
+              - !Sub 'arn:aws:s3:::${DataBucket}/*'
+          - Sid: Require SSE-KMS Encryption Key
+            Action:
+              - s3:PutObject
+            Condition:
+              StringNotLikeIfExists:
+                's3:x-amz-server-side-encryption-aws-kms-key-id': !Ref ProjectKeyArn
+            Effect: Deny
+            Principal: '*'
+            Resource:
+              - !Sub 'arn:aws:s3:::${DataBucket}/*'
+
+  #########################
+  #
+  # Parameter Store Parameters
+  #
+  #########################
+  ParamDataBucketName:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Description: Data Bucket Name
+      Name: /aws-demo/s3/data-bucket-name
+      Type: String
+      Value: !Ref DataBucket
+
+Outputs:
+  DataBucketName:
+    Description: Data Bucket Name
+    Value: !Ref DataBucket
