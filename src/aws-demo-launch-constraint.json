@@ -1,0 +1,29 @@
+{
+   "Version": "2012-10-17",
+   "Statement": [
+       {
+            "Action": [
+                "cloudformation:CreateStack",
+                "cloudformation:DeleteStack",
+                "cloudformation:DescribeStackEvents",
+                "cloudformation:DescribeStacks",
+                "cloudformation:GetTemplateSummary",
+                "cloudformation:SetStackPolicy",
+                "cloudformation:ValidateTemplate",
+                "cloudformation:UpdateStack",
+                "ec2:*",
+                "rds:*",
+                "s3:GetObject",
+                "servicecatalog:*",
+                "sns:*"
+            ],
+            "Condition":{
+                "StringEquals":{
+                   "s3:ExistingObjectTag/servicecatalog:provisioning":"true"
+                }
+            },
+            "Effect": "Allow",
+            "Resource": "*"
+       }
+   ]
+}

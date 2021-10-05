@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS Demo RDS MySQL instance setup
+Transform: AWS::SecretsManager-2020-07-23
+
+Parameters:
+  ProjectName:
+    ConstraintDescription: Project name that will be used as the prefix for all deployed resources
+    Default: aws-demo
+    Description: Project name that will be used as the prefix for all deployed resources
+    Type: String
+
+  KmsKeyArn:
+    Default: /aws-demo/kms/key_arn
+    Description: The key ARN for the KMS key used to encrypt all project resources at rest
+    Type: AWS::SSM::Parameter::Value<String>
+
+  PrivateSubnet1:
+    Default: /aws-demo/vpc/private_subnet_1
+    Description: The id for Private Subnet 1 in the VPC where the DocDB cluster should be deployed
+    Type: AWS::SSM::Parameter::Value<String>
+
+  PrivateSubnet2:
+    Default: /aws-demo/vpc/private_subnet_2
+    Description: The id for Private Subnet 2 in the VPC where the DocDB cluster should be deployed
+    Type: AWS::SSM::Parameter::Value<String>
+
+  PrivateSubnet3:
+    Default: /aws-demo/vpc/private_subnet_3
+    Description: The id for Private Subnet 3 in the VPC where the DocDB cluster should be deployed
+    Type: AWS::SSM::Parameter::Value<String>
+
+  VPC:
+    Default: /aws-demo/vpc/id
+    Description: The id for the VPC into which the DocDB cluster should be deployed
+    Type: AWS::SSM::Parameter::Value<String>
+
+  DocDBInstanceClass:
+    AllowedValues:
+      - db.t3.medium
+      - db.r5.large
+      - db.r5.xlarge
+      - db.r5.2xlarge
+      - db.r5.4xlarge
+      - db.r5.12xlarge
+      - db.r5.24xlarge                             
+    ConstraintDescription : RDS MySQL instance class options.
+    Default: db.r5.large
+    Description : RDS MySQL instance class options.
+    Type: String
+
+Resources:
+  #########################
+  #
+  # RDS MySQL Instance
+  #
+  #########################
+  RdsMySqlInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: '50'
+      AllowMajorVersionUpgrade: 'false'
+      AutoMinorVersionUpgrade: 'true'
+      BackupRetentionPeriod: '1'
+      DBInstanceClass: db.t3.medium
+      DBInstanceIdentifier: rds-mysql-instance
+      DBName: demodb
+      DBParameterGroupName:
+        Ref: RdsMySqlInstanceParameterGroup
+      DBSubnetGroupName:
+        Ref: RdsMySqlSubnetGroup
+      Engine: mysql
+      EngineVersion: '8.0'
+      KmsKeyId: !Ref KmsKeyArn
+      MasterUsername:
+        Fn::Sub: '{{resolve:secretsmanager:${RdsMySqlInstanceSecret}::username}}'
+      MasterUserPassword:
+        Fn::Sub: '{{resolve:secretsmanager:${RdsMySqlInstanceSecret}::password}}'
+      Port: '3306'
+      PreferredBackupWindow: 04:00-04:30
+      PreferredMaintenanceWindow: sun:05:20-sun:05:50
+      PubliclyAccessible: 'false'
+      LicenseModel:  general-public-license
+      StorageType: gp2
+      VPCSecurityGroups:
+      - Ref: RdsMySqlSecurityGroup
+
+  #########################
+  #
+  # RDS MySQL Instance Parameter Group
+  #
+  #########################
+  RdsMySqlInstanceParameterGroup:
+    Type: AWS::DocDB::DBParameterGroup
+    Properties: 
+      Description: !Sub ${ProjectName}-rds-mysql-instance-parameter-group 
+      Family: mysql8.0
+      Name: !Sub ${ProjectName}-rds-mysql-instance-parameter-group
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-rds-mysql-instance-parameter-group
+
+  #########################
+  #
+  # RDS MySQL Secret
+  #
+  #########################
+  RdsMySqlSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub ${ProjectName}-rds-mysql-instance-secret
+      GenerateSecretString:
+        ExcludeCharacters: "\"@/\\"
+        GenerateStringKey: password
+        PasswordLength: 16
+        SecretStringTemplate: '{"username": "root","ssl": true}'
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-rds-mysql-instance-secret
+
+  RdsMySqlInstanceSecretRotationSchedule:
+    Type: AWS::SecretsManager::RotationSchedule
+    DependsOn: RdsMySqlInstanceSecretTargetAttachment
+    Properties:
+      SecretId: !Ref RdsMySqlInstanceSecret
+      HostedRotationLambda:
+        RotationType: MySQLSingleUser
+        RotationLambdaName: SecretsManagerRotation
+        VpcSecurityGroupIds: !Ref RdsMySqlSecurityGroup
+        VpcSubnetIds:
+          Fn::Join:
+          - ","
+          - - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+            - !Ref PrivateSubnet3
+      RotationRules:
+        AutomaticallyAfterDays: 30
+
+  RdsMySqlInstanceSecretTargetAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref RdsMySqlInstanceSecret
+      TargetId: !Ref RdsMySqlInstance
+      TargetType: AWS::RDS::DBInstance
+
+  #########################
+  #
+  # RDS MySQL Security Group
+  #
+  #########################  
+  RdsMySqlSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${ProjectName}-rds-mysql-sg
+      GroupName: !Sub ${ProjectName}-rds-mysql-sg
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-rds-mysql-sg
+      VpcId: !Ref VPC
+
+  #########################
+  #
+  # RDS MySQL Subnet Group
+  #
+  #########################  
+  RdsMySqlSubnetGroup: 
+    Type: AWS::DocDB::DBSubnetGroup
+    Properties: 
+      DBSubnetGroupDescription: ${ProjectName}-rds-mysql-subnet-group
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+      Tags: 
+        - Key: Name
+          Value: !Sub ${ProjectName}-rds-mysql-subnet-group
+
+  #########################
+  #
+  # VPC Endpoints
+  #
+  #########################  
+  SecretsManagerVPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds: 
+        - !Ref RdsMySqlSecurityGroup
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.secretsmanager
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+      VpcEndpointType: Interface
+      VpcId: !Ref VPC
+
+  #########################
+  #
+  # Parameter Store Parameters
+  #
+  #########################
+  ParamRdsMySqlInstanceEndpointAddress:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: RDS MySQL Instance Endpoint Address
+      Name: /aws-demo/rds/rds_mysql_instance_endpoint_address
+      Type: String
+      Value: !GetAtt RdsMySqlInstance.Endpoint.Address
+
+  ParamRdsMySqlInstanceEndpointPort:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: RDS MySQL Instance Endpoint Port
+      Name: /aws-demo/rds/rds_mysql_instance_endpoint_port
+      Type: String
+      Value: !GetAtt RdsMySqlInstance.Endpoint.Port
+
+  ParamRdsMySqlInstanceId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: RDS MySQL Instance Id
+      Name: /aws-demo/rds/rds_mysql_instance_id
+      Type: String
+      Value: !Ref RdsMySqlInstance
+
+  ParamRdsMySqlInstanceSecretArn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: RDS MySQL Instance Secret ARN
+      Name: /aws-demo/rds/rds_mysql_instance_secret_arn
+      Type: String
+      Value: !Ref RdsMySqlInstanceSecret
+
+  ParamRdsMySqlSecurityGroup:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: RDS MySQL Instance Security Group Id
+      Name: /aws-demo/rds/rds_mysql_instance_security_group
+      Type: String
+      Value: !Ref RdsMySqlSecurityGroup
+
+Outputs:
+  RdsMySqlInstanceEndpointAddress:
+    Description: RDS MySQL Instance Endpoint Address
+    Value: !GetAtt RdsMySqlInstance.Endpoint.Address
+
+  RdsMySqlInstanceEndpointPort:
+    Description: RDS MySQL Instance Endpoint Port
+    Value: !GetAtt RdsMySqlInstance.Endpoint.Port
+
+  RdsMySqlInstanceId:
+    Description: RDS MySQL Instance Id
+    Value: !Ref RdsMySqlInstance
+
+  RdsMySqlInstanceSecretArn:
+    Description: RDS MySQL Instance Secret ARN
+    Value: !Ref RdsMySqlInstanceSecret
+
+  RdsMySqlSecurityGroupId:
+    Description: RDS MySQL Instance Security Group Id
+    Value: !Ref RdsMySqlSecurityGroup
